@@ -11,7 +11,8 @@ class Sport(models.Model):
     sport_name = models.CharField(max_length=100,db_index=True, verbose_name='Type of sport')
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='Created at')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='Updated at')
-    cities = models.ManyToManyField('City', related_name='sports')
+    cities = models.ManyToManyField('City', related_name='Sports')
+    sports = models.ForeignKey('Place',on_delete=models.CASCADE, related_name='Places')
     photo = models.ImageField(upload_to='sport_photo/', blank=True, null=True)
 
     class Meta:
@@ -34,7 +35,7 @@ class Club(models.Model):
     event_date = models.DateField(verbose_name='Event data')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='Updated at')
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='Created at')
-    sport = models.ForeignKey(Sport, on_delete=models.CASCADE, related_name='sports')
+    sport = models.ForeignKey(Sport, on_delete=models.CASCADE, related_name='Sports')
     photo = models.ImageField(upload_to='club_photo/', blank=True, null=True)
     
 
@@ -56,7 +57,8 @@ class Concert(models.Model):
     concert_id = models.CharField(max_length=200, verbose_name='Consert id')
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='Created at')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='Updated at')
-    cities = models.ManyToManyField('City', related_name='conserts')
+    cities = models.ManyToManyField('City', related_name='Conserts')
+    places = models.ForeignKey('Place', on_delete = models.CASCADE ,related_name='places')
     photo = models.ImageField(upload_to='concert_photo/', blank=True, null=True)
 
     class Meta:
@@ -118,6 +120,7 @@ class Place(models.Model):
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='Created at')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='Updated at')
     city = models.ForeignKey(City, on_delete=models.CASCADE, related_name='places')
+    sports = models.ForeignKey(Sport, on_delete=models.CASCADE)
     photo = models.ImageField(upload_to='place_photo/', blank=True)
 
 
@@ -132,7 +135,7 @@ class Place(models.Model):
 
     def __str__(self):
         return self.place_name
-    
+
 
 
 

@@ -6,51 +6,83 @@ from django.contrib.auth.hashers import make_password
 class SportSerializer(serializers.ModelSerializer):
     class Meta:
         model = Sport
-        fields = "__all__"
+        fields = [
+            'sport_name',
+            'photo',
+        ]
 
 
 
 class ClubSerializer(serializers.ModelSerializer):
     class Meta:
         model = Club
-        fields = "__all__"
+        fields = [
+            'club_name',
+            'photo',
+            'event_time',
+            'event_date',
+        ]
 
 
 
 class ConsertSerializer(serializers.ModelSerializer):
     class Meta:
         model = Concert
-        fields = "__all__"
+        fields = [
+            'concert_name',
+            'photo',
+        ]
 
 
 class SingerSerializer(serializers.ModelSerializer):
     class Meta :
         model = Singer
-        fields = "__all__"
+        fields = [
+            'singer_name',
+            'event_time',
+            'event_date',
+            'photo',
+        ]
 
 
 class CitySerializer(serializers.ModelSerializer):
     class Meta :
         model = City
-        fields = "__all__"
+        fields = [
+            'city_name',
+            'photo',
+        ]
 
 
 class PlaceSerializer(serializers.ModelSerializer):
     class Meta:
         model = Place
-        fields = "__all__"
+        fields = [
+            'place_name',
+            'photo',
+        ]
 
 
 class TicketSerializer(serializers.ModelSerializer):
     class Meta :
         model = Ticket
-        fields = "__all__"
+        fields = [
+            'category',
+            'price',
+            'seat_number',
+            
+        ]
 
 
 class UserSerializer(serializers.ModelSerializer):
     class Meta : 
         model = User
-        fields ="__all__"
+        fields = [
+            "password",
+            "email",
+            "full_name",
+            "phone",
+        ]
 
     def create(self, validated_data):
         validated_data["password"] = make_password(validated_data["password"])  # ✅ Hash the password

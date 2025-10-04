@@ -1,0 +1,36 @@
+# docker-compose.yml file ichida container yaratiladi 
+
+services:
+
+  goticket_con:         #container nomi 
+    build: .            # dockerfile ichidan image build qiladi va image parametri boyicha nom beradi 
+    command: python manage.py runserver 0.0.0.0:8000  # loyihamizni yani shu run qilish uchun command  va portlari  
+    working_dir: /app  # manage.py qaysi fileda joylahsgan bosa osha yoziladi bunaqa 
+    restart: unless-stopped #server ochib qosa, container crash bosa ozi qayta ishga tushadi 
+    volumes:
+      - .:/app        # . bu GOTICKET file boladi , : esa bu ulash manosida keladi , app bu conatiner ichidagi app fayliga otqazadi 
+    ports:
+      - 8001:8000      # local kompyuter va container ichidagi port nomi command buyrugi ichidagi portn nechi bosa container porti shu boladi 
+    env_file:
+      - .env
+
+    # environment:       # bulani settings.py ichida olamiz 
+    #   - DEBUG=1
+    #   - SECRET_KEY=django-insecure-lb20y^z-(^j+0h%tg1*h&41t=eb6qmacyr%^vd$=c)6w(i8ttj
+    #   - ALLOWED_HOSTS=localhost,127.0.0.1,0.0.0.0
+  
+  
+  db:
+    image: postgres:15        # default yaratilgan boladi ozi 
+    environment:              # settings.py ichidan olib yozamiz 
+      - POSTGRES_DB=goticket
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=Sh998570167
+    volumes:
+      - postgres_data:/var/lib/postgresql/data # default hamma projectlaga shu yoziladi 
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+
+volumes: # agar database ochib ketsa bunda zaxira qb saqlanib qoladi  
+  postgres_data: {}
