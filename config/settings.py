@@ -12,7 +12,11 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 
 from pathlib import Path
 from datetime import timedelta
+import os
+from dotenv import load_dotenv
 
+
+load_dotenv()
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -21,13 +25,13 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-lb20y^z-(^j+0h%tg1*h&41t=eb6qmacyr%^vd$=c)6w(i8ttj'
+SECRET_KEY = os.environ.get("SECRET_KEY")
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = os.environ.get("DEBUG", "0") == "1"
 
-ALLOWED_HOSTS = []
-
+ALLOWED_HOSTS = os.environ.get("ALLOWED_HOSTS", "localhost,127.0.0.1,0.0.0.0").split(",")
+# 'django-insecure-lb20y^z-(^j+0h%tg1*h&41t=eb6qmacyr%^vd$=c)6w(i8ttj'
 
 # Application definition
 
@@ -54,9 +58,7 @@ REST_FRAMEWORK = {
         'rest_framework.filters.OrderingFilter',
     ],
         'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
-        'DEFAULT_PERMISSION_CLASSES': [
-        'rest_framework.permissions.DjangoModelPermissionsOrAnonReadOnly'
-    ],
+        
         'DEFAULT_AUTHENTICATION_CLASSES': (
         'rest_framework_simplejwt.authentication.JWTAuthentication',
     )
@@ -113,13 +115,13 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # }
 
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'goticket',
-        'USER': 'postgres',
-        'PASSWORD': 'Sh998570167',
-        'HOST': 'localhost',
-        'PORT': '5432',
+    'default': {   # default bazaga ulanish sozlamalari
+        'ENGINE': 'django.db.backends.postgresql',   # qaysi DB ishlatyapmiz: PostgreSQL
+        'NAME': os.environ.get("POSTGRES_DB"),       # DB nomi (.env dan POSTGRES_DB ni o‘qiydi)
+        'USER': os.environ.get("POSTGRES_USER"),     # DB useri (.env dan POSTGRES_USER)
+        'PASSWORD': os.environ.get("POSTGRES_PASSWORD"),  # DB paroli
+        'HOST': os.environ.get("POSTGRES_HOST"),     # DB server manzili (docker-compose ichida bu `db` servisi bo‘ladi)
+        'PORT': os.environ.get("POSTGRES_PORT"),     # DB porti (Postgres uchun odatda 5432)
     }
 }
 
