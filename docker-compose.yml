@@ -2,7 +2,7 @@
 
 services:
 
-  goticket_con:         #container nomi 
+  goticket_con:         # container nomi 
     build: .            # dockerfile ichidan image build qiladi va image parametri boyicha nom beradi 
     command: python manage.py runserver 0.0.0.0:8000  # loyihamizni yani shu run qilish uchun command  va portlari  
     working_dir: /app  # manage.py qaysi fileda joylahsgan bosa osha yoziladi bunaqa 
@@ -32,5 +32,25 @@ services:
       - "5432:5432"
     restart: unless-stopped
 
+  redis:
+    image: redis:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+    - redis_data:/data
+
+  celery-worker:
+    build: .
+    command: celery config worker -l info
+    volumes:
+      - .:/app
+    restart: unless-stopped
+    depends_on: # yozgan containerimiz ishlashidan oldin qaysidir container ishlashi kere bosa depends_on yoziladi yani bu container ishlashi uchun kere boladgan boshqa container ishlab turishi kere  
+      - redis
+      - db
+    
+ 
 volumes: # agar database ochib ketsa bunda zaxira qb saqlanib qoladi  
   postgres_data: {}
+  redis_data: {} 
