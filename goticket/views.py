@@ -300,3 +300,85 @@ class UserGetMe(generics.ListAPIView):
         serializer = self.serializer_class(queryset, many=True)
         return Response(serializer.data)
         
+
+
+class CartView(generics.CreateAPIView):
+    queryset = Cart.objects.all()
+    serializer_class = CartSerializer
+
+class CartListView(generics.ListAPIView):
+    queryset =Cart.objects.all()
+    serializer_class = CartSerializer
+
+class CartUpdateView(generics.UpdateAPIView):
+    queryset =Cart.objects.all()
+    serializer_class = CartSerializer
+
+
+    def put(self, request, *args, **kwargs):
+        return self.update(request, *args, **kwargs)
+
+    def patch(self, request, *args, **kwargs):
+        return self.partial_update(request, *args, **kwargs)    
+
+
+class CartDeleteView(generics.DestroyAPIView):
+    queryset = Cart.objects.all()
+
+    def delete(self, request, *args, **kwargs):
+        return self.destroy(request, *args, **kwargs)
+
+
+
+
+class CartItemView(generics.CreateAPIView):
+    queryset = CartItem.objects.all()
+    serializer_class = CartItemSerializer
+
+class CartItemListView(generics.ListAPIView):
+    queryset = CartItem.objects.all()
+    serializer_class = CartItemSerializer
+
+class CartItemUpdateView(generics.UpdateAPIView):
+    queryset = CartItem.objects.all()
+    serializer_class = CartItemSerializer
+
+    def put(self, request, *args, **kwargs):
+        return self.update(request, *args, **kwargs)
+
+    def patch(self, request, *args, **kwargs):
+        return self.partial_update(request, *args, **kwargs)    
+
+class CartItemDeleteView(generics.DestroyAPIView):
+    queryset = CartItem.objects.all()
+
+    def delete(self, request, *args, **kwargs):
+        return self.destroy(request, *args, **kwargs)
+
+
+
+
+class SeatView(generics.CreateAPIView):
+    queryset = Seat.objects.all()
+    serializer_class = SeatSerializer
+
+class SeatListView(generics.ListAPIView):
+    queryset = Seat.objects.all()
+    serializer_class = SeatSerializer
+
+class SeatUpdateView(generics.UpdateAPIView):
+    queryset = Seat.objects.all()
+    serializer_class = SeatSerializer
+
+    def put(self, request, *args, **kwargs):
+        return self.update(request, *args, **kwargs)
+
+    def patch(self, request, *args, **kwargs):
+        return self.partial_update(request, *args, **kwargs)    
+    
+class SeatDeleteView(generics.DestroyAPIView):
+    queryset = Seat.objects.all()
+
+    def delete(self, request, *args, **kwargs):
+        return self.destroy(request, *args, **kwargs)
+    

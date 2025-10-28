@@ -1,4 +1,5 @@
 from django.db import models
+from django.conf import settings
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 from django.contrib.contenttypes.models import ContentType #bitta modelni hamma modelga ulash uchun ishlatiladi va hamma modelni bitta ContentType obyekt qilib saqlaydi 
 from django.contrib.contenttypes.fields import GenericForeignKey #bir nechta modelga bir xil field orqali ulanadi, ForeignKey faqat bitta modelga ulanadi va kop modellarni ulash kere bosa kop FK yozish kere , bu bilan faqat bitta shu yoziladi va bitta qator kod bilan bir necha qator FK yoziladi 
@@ -223,3 +224,41 @@ class User(AbstractBaseUser, PermissionsMixin):
 
         def __str__(self):
             return self.email
+
+
+
+class Cart(models.Model):
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='carts')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+
+    def __str__(self):
+        return f"Cart {self.id} for {self.user.email}"
+    
+    class Meta:
+        verbose_name = "Cart"
+        verbose_name_plural = "Carts"
+        ordering = ['-created_at']
+
+
+
+class CartItem(models.Model):
+    cart = models.ForeignKey(Cart, on_delete=models.CASCADE, related_name='items')
+    ticket = models.ForeignKey(Ticket, on_delete=models.CASCADE, related_name='cart_items')
+    added_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Cart Item"
+        verbose_name_plural = "Cart Items"
+
+
+
+class Seat(models.Model):
+    seat_number = models.IntegerField(default=1, verbose_name='seat_number')
+    place = models.ForeignKey(Place, on_delete=models.CASCADE, related_name='seats')
+
+    class Meta :
+        verbose_name = "Seat"
+        verbose_name_plural = "Seats"
+ 
