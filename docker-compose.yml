@@ -10,7 +10,7 @@ services:
     volumes:
       - .:/app        # . bu GOTICKET file boladi , : esa bu ulash manosida keladi , app bu conatiner ichidagi app fayliga otqazadi 
     ports:
-      - 8001:8000      # local kompyuter va container ichidagi port nomi command buyrugi ichidagi portn nechi bosa container porti shu boladi 
+      - 8001:8000      # local kompyuter va container ichidagi port nomi command buyrugi ichidagi portni nechi bosa container porti shu boladi 
     env_file:
       - .env
 
@@ -42,7 +42,7 @@ services:
 
   celery-worker:
     build: .
-    command: celery config worker -l info
+    command: celery -A goticket worker -l info
     volumes:
       - .:/app
     restart: unless-stopped
@@ -54,3 +54,6 @@ services:
 volumes: # agar database ochib ketsa bunda zaxira qb saqlanib qoladi  
   postgres_data: {}
   redis_data: {} 
+
+
+

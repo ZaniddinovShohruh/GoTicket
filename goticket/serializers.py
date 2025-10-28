@@ -93,3 +93,19 @@ class UserListSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = ['id', 'full_name', 'email']
+
+
+class CartSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Cart
+        fields = "__all__" 
+
+class CartItemSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CartItem
+        fields = "__all__"
+
+class SeatSerializer(serializers.ModelSerializer):
+    class Meta :
+        model = Seat
+        fields = "__all__"
