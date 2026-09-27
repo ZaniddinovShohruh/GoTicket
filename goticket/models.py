@@ -1,20 +1,42 @@
 from django.db import models
 from django.conf import settings
+from django.core.exceptions import ValidationError
+from django.db.models.signals import pre_delete
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 from django.contrib.contenttypes.models import ContentType #bitta modelni hamma modelga ulash uchun ishlatiladi va hamma modelni bitta ContentType obyekt qilib saqlaydi 
 from django.contrib.contenttypes.fields import GenericForeignKey #bir nechta modelga bir xil field orqali ulanadi, ForeignKey faqat bitta modelga ulanadi va kop modellarni ulash kere bosa kop FK yozish kere , bu bilan faqat bitta shu yoziladi va bitta qator kod bilan bir necha qator FK yoziladi 
+
+TICKET_EVENT_MODELS = ('club', 'concert')
+
+CURRENCY_USD = 'USD'
+CURRENCY_EUR = 'EUR'
+CURRENCY_UZS = 'UZS'
+CURRENCY_CHOICES = (
+    (CURRENCY_USD, 'Dollar ($)'),
+    (CURRENCY_EUR, 'Euro (€)'),
+    (CURRENCY_UZS, "So'm"),
+)
+
+
+def limit_ticket_content_type():
+    return models.Q(app_label='goticket', model__in=TICKET_EVENT_MODELS)
+
+
+def normalize_seat_number(value):
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None 
 
 
 
 
 class Sport(models.Model):
-    sport_id = models.CharField(max_length=200)
+    sport_id = models.AutoField(primary_key=True)   
     sport_name = models.CharField(max_length=100,db_index=True, verbose_name='Type of sport')
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='Created at')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='Updated at')
-    cities = models.ManyToManyField('City', related_name='Sports')
-    sports = models.ForeignKey('Place',on_delete=models.CASCADE, related_name='Places')
-    photo = models.ImageField(upload_to='sport_photo/', blank=True, null=True)
+    photo = models.ImageField(upload_to='photos/sport_photo/', blank=True, null=True)
 
     class Meta:
         verbose_name='Sport'
@@ -27,18 +49,17 @@ class Sport(models.Model):
     def __str__(self):
         return self.sport_name 
 
-
-
 class Club(models.Model):
-    club_id = models.CharField(max_length=200, verbose_name='Club id')
+    club_id = models.AutoField(primary_key=True, verbose_name='Club id')
     event_time = models.DateField(verbose_name='Event time')
     club_name = models.CharField(max_length=200,db_index=True, verbose_name='Club name')
     event_date = models.DateField(verbose_name='Event data')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='Updated at')
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='Created at')
-    sport = models.ForeignKey(Sport, on_delete=models.CASCADE, related_name='Sports')
-    photo = models.ImageField(upload_to='club_photo/', blank=True, null=True)
-    
+    photo = models.ImageField(upload_to='photos/club_photo/', blank=True, null=True)
+    cities = models.ForeignKey('City', related_name='clubs', on_delete=models.CASCADE)
+    places = models.ForeignKey('Place',on_delete=models.CASCADE, related_name='clubs')
+    sports = models.ForeignKey(Sport, on_delete=models.CASCADE, related_name='clubs', null=True, blank=True)
 
     class Meta:
         verbose_name='Club'
@@ -55,12 +76,13 @@ class Club(models.Model):
 
 class Concert(models.Model):
     concert_name = models.CharField(max_length=200,db_index=True, verbose_name='Consert name')
-    concert_id = models.CharField(max_length=200, verbose_name='Consert id')
+    concert_id = models.AutoField(primary_key=True, verbose_name='Consert id')
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='Created at')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='Updated at')
-    cities = models.ManyToManyField('City', related_name='Conserts')
-    places = models.ForeignKey('Place', on_delete = models.CASCADE ,related_name='places')
-    photo = models.ImageField(upload_to='concert_photo/', blank=True, null=True)
+    cities = models.ForeignKey('City', related_name='conserts', on_delete=models.CASCADE)
+    places = models.ForeignKey('Place', on_delete = models.CASCADE ,related_name='conserts')
+    singer = models.ForeignKey('Singer', on_delete=models.CASCADE, related_name='conserts' )
+    photo = models.ImageField(upload_to='photos/concert_photo/', blank=True, null=True)
 
     class Meta:
         verbose_name = 'Concert'
@@ -76,14 +98,13 @@ class Concert(models.Model):
 
 
 class Singer(models.Model):
-    singer_id = models.CharField(max_length=200, verbose_name='Singer id')
+    singer_id = models.AutoField(primary_key=True, verbose_name='Singer id')
     singer_name = models.CharField(max_length=200, db_index=True, verbose_name='Singer name')
-    event_time = models.DateField(verbose_name='Event time')
+    event_time = models.TimeField(verbose_name='Event time')
     event_date = models.DateField(verbose_name='Event data')
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='Created at')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='Updated at')
-    consert = models.ForeignKey(Concert, on_delete=models.CASCADE, related_name='singers') 
-    photo = models.ImageField(upload_to='singer_photo/', blank=True, null=True)
+    photo = models.ImageField(upload_to='photos/singer_photo/', blank=True, null=True)
 
     class Meta:
         verbose_name = 'Singer'
@@ -99,10 +120,10 @@ class Singer(models.Model):
 
 class City(models.Model):
     city_name = models.CharField(max_length=200, db_index=True, verbose_name='City name')  #db_index=True databaseni tartiblaydi va bu qidirishni tezlashtiradi, agar buni qoymasak ketma-ket qidiradi va bu ishlashni seknlashtiradi
-    city_id = models.CharField(max_length=200, verbose_name='City id')
+    city_id = models.AutoField(primary_key=True, verbose_name='City id')
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='Created at')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='Updated at')
-    photo = models.ImageField(upload_to='city_photo/', blank=True, null=True)
+    photo = models.ImageField(upload_to='photos/city_photo/', blank=True, null=True)
 
     class Meta :
      verbose_name = 'City'
@@ -116,13 +137,24 @@ class City(models.Model):
         return self.city_name
 
 class Place(models.Model):
-    place_id = models.CharField(max_length=200, verbose_name='Place id')
+    place_id = models.AutoField(primary_key=True, verbose_name='Place id')
     place_name = models.TextField(max_length=200, verbose_name='Place name', db_index=True)
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='Created at')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='Updated at')
+    photo = models.ImageField(upload_to='photos/place_photo/', blank=True, null=True)
     city = models.ForeignKey(City, on_delete=models.CASCADE, related_name='places')
-    sports = models.ForeignKey(Sport, on_delete=models.CASCADE)
-    photo = models.ImageField(upload_to='place_photo/', blank=True)
+    scheme = models.ImageField(
+        upload_to='photos/place_scheme/',
+        blank=True,
+        null=True,
+        verbose_name='Stadium scheme',
+        help_text='Stadion sxemasi rasmi (sektorlar ko‘rinadigan rasm)',
+    )
+    capacity = models.PositiveIntegerField(
+        default=0,
+        verbose_name='Seat capacity',
+        help_text='Sektorlardagi o‘rindiqlardan avtomatik hisoblanadi',
+    )
 
 
     class Meta:
@@ -137,37 +169,313 @@ class Place(models.Model):
     def __str__(self):
         return self.place_name
 
+    def refresh_capacity(self):
+        self.capacity = Seat.objects.filter(section__place=self).count()
+        Place.objects.filter(pk=self.pk).update(capacity=self.capacity)
+
+
+def parse_row_layout(value):
+    if not value or not value.strip():
+        return []
+    counts = []
+    for part in value.replace(';', ',').split(','):
+        part = part.strip()
+        if not part:
+            continue
+        if not part.isdigit() or int(part) < 1:
+            raise ValidationError(
+                {'row_layout': 'Faqat musbat sonlar, vergul bilan: masalan 20,22,24'}
+            )
+        counts.append(int(part))
+    return counts
+
+
+class Section(models.Model):
+    CATEGORY_VIP = 'VIP'
+    CATEGORY_STANDART = 'Standart'
+    CATEGORY_CHOICES = (
+        (CATEGORY_VIP, 'VIP'),
+        (CATEGORY_STANDART, 'Standart'),
+    )
+
+    place = models.ForeignKey(Place, on_delete=models.CASCADE, related_name='sections')
+    name = models.CharField(max_length=20, verbose_name='Section name', help_text='Masalan A401, B408, Fan-zona')
+    category = models.CharField(
+        max_length=20,
+        choices=CATEGORY_CHOICES,
+        default=CATEGORY_STANDART,
+        verbose_name='category',
+    )
+    rows = models.PositiveIntegerField(default=10, verbose_name='Rows')
+    seats_per_row = models.PositiveIntegerField(default=20, verbose_name='Seats per row')
+    row_layout = models.CharField(
+        max_length=500,
+        blank=True,
+        verbose_name='Row layout',
+        help_text='Ixtiyoriy: har qatordagi o‘rindiqlar soni vergul bilan (20,22,24). To‘ldirilsa Rows va Seats per row o‘rniga ishlatiladi.',
+    )
+    map_x = models.DecimalField(
+        max_digits=5, decimal_places=2, null=True, blank=True,
+        verbose_name='Map X %',
+        help_text='Sxema rasmida sektor joyi: chapdan foizda (0–100)',
+    )
+    map_y = models.DecimalField(
+        max_digits=5, decimal_places=2, null=True, blank=True,
+        verbose_name='Map Y %',
+        help_text='Sxema rasmida sektor joyi: tepadan foizda (0–100)',
+    )
+    order = models.PositiveIntegerField(default=0, verbose_name='Order')
+
+    class Meta:
+        verbose_name = 'Section'
+        verbose_name_plural = 'Sections'
+        ordering = ['order', 'name']
+        constraints = [
+            models.UniqueConstraint(fields=['place', 'name'], name='unique_place_section'),
+        ]
+
+    def __str__(self):
+        return f'{self.place} — {self.name}'
+
+    def row_counts(self):
+        layout = parse_row_layout(self.row_layout)
+        if layout:
+            return layout
+        return [self.seats_per_row] * self.rows
+
+    def clean(self):
+        counts = self.row_counts()
+        if not counts or sum(counts) < 1:
+            raise ValidationError('Sektorda kamida bitta o‘rindiq bo‘lishi kerak.')
+        for coord in ('map_x', 'map_y'):
+            value = getattr(self, coord)
+            if value is not None and not (0 <= value <= 100):
+                raise ValidationError({coord: '0 dan 100 gacha bo‘lishi kerak.'})
+
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
+        self.generate_seats()
+
+    def generate_seats(self):
+        wanted = set()
+        for row, count in enumerate(self.row_counts(), start=1):
+            for number in range(1, count + 1):
+                wanted.add((row, number))
+
+        existing = {
+            (row, number): pk
+            for pk, row, number in self.seats.values_list('pk', 'row', 'number')
+        }
+        missing = [
+            Seat(section=self, row=row, number=number)
+            for row, number in sorted(wanted - existing.keys())
+        ]
+        Seat.objects.bulk_create(missing, batch_size=2000, ignore_conflicts=True)
+
+        extra_ids = [pk for key, pk in existing.items() if key not in wanted]
+        if extra_ids:
+            used = set(
+                Ticket.objects.filter(seat_id__in=extra_ids).values_list('seat_id', flat=True)
+            )
+            Seat.objects.filter(pk__in=[pk for pk in extra_ids if pk not in used]).delete()
+
+        self.place.refresh_capacity()
+
+
+class Seat(models.Model):
+    section = models.ForeignKey(Section, on_delete=models.CASCADE, related_name='seats')
+    row = models.PositiveIntegerField(verbose_name='Row')
+    number = models.PositiveIntegerField(verbose_name='Seat number')
+
+    class Meta:
+        verbose_name = 'Seat'
+        verbose_name_plural = 'Seats'
+        ordering = ['section', 'row', 'number']
+        constraints = [
+            models.UniqueConstraint(fields=['section', 'row', 'number'], name='unique_section_seat'),
+        ]
+
+    def __str__(self):
+        return f'{self.section.name}, {self.row}-qator, {self.number}-o‘rin'
+
+    @property
+    def code(self):
+        return f'{self.section.name}-{self.row}-{self.number}'
+
 
 
 
 class Ticket(models.Model):
-    category = models.CharField(max_length=100, verbose_name='category') 
-    price = models.DecimalField(max_digits=8, decimal_places=2, verbose_name='Price')
-    seat_number = models.CharField(max_length=20, blank=True, null=True, verbose_name='Seat number')  
-    is_sold = models.BooleanField(default=False)   
+    CATEGORY_VIP = 'VIP'
+    CATEGORY_STANDART = 'Standart'
+    CATEGORY_CHOICES = (
+        (CATEGORY_VIP, 'VIP'),
+        (CATEGORY_STANDART, 'Standart'),
+    )
 
-    content_type = models.ForeignKey(ContentType, on_delete=models.CASCADE)     #Qaysi modelga ulanadi Sport, Concert va boshqalarini tanlaydi 
-    object_id = models.PositiveIntegerField()        # U model ichidagi qaysi obyektga ulanadi (id) tanlaydi 
-    event = GenericForeignKey("content_type", "object_id")          # Ularni birlashtiradi
+    category = models.CharField(
+        max_length=20,
+        choices=CATEGORY_CHOICES,
+        default=CATEGORY_STANDART,
+        verbose_name='category',
+    ) 
+    price = models.DecimalField(max_digits=12, decimal_places=2, verbose_name='Price')
+    currency = models.CharField(
+        max_length=3,
+        choices=CURRENCY_CHOICES,
+        default=CURRENCY_UZS,
+        verbose_name='Currency',
+    )
+    seat = models.ForeignKey(
+        'Seat',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='tickets',
+        verbose_name='Seat',
+    )
+    seat_number = models.CharField(max_length=40, blank=True, null=True, verbose_name='Seat number')  
+    is_sold = models.BooleanField(default=False)
+    ticket_id = models.AutoField(primary_key=True, verbose_name='Ticket id')
+    buyer = models.ForeignKey(
+        'User',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='purchased_tickets',
+    )
+    purchased_at = models.DateTimeField(null=True, blank=True)
+
+    content_type = models.ForeignKey(
+        ContentType,
+        on_delete=models.CASCADE,
+        limit_choices_to=limit_ticket_content_type,
+    )
+    object_id = models.PositiveIntegerField()
+    event = GenericForeignKey("content_type", "object_id")
+
+    def clean(self):
+        self.seat_number = normalize_seat_number(self.seat_number)
+        if not self.content_type_id:
+            raise ValidationError({'content_type': 'Event type is required.'})
+        if (
+            self.content_type.app_label != 'goticket'
+            or self.content_type.model not in TICKET_EVENT_MODELS
+        ):
+            raise ValidationError(
+                {'content_type': 'Ticket can only be linked to Club or Concert.'}
+            )
+        model = self.content_type.model_class()
+        event = model.objects.filter(pk=self.object_id).first() if model else None
+        if event is None:
+            raise ValidationError({'object_id': 'Event not found.'})
+        if self.seat_id and self.seat.section.place_id != event.places_id:
+            raise ValidationError({'seat': 'Bu o‘rindiq tadbir o‘tadigan stadionga tegishli emas.'})
+        if self.seat_number:
+            qs = Ticket.objects.filter(
+                content_type=self.content_type,
+                object_id=self.object_id,
+                seat_number=self.seat_number,
+            )
+            if self.pk:
+                qs = qs.exclude(pk=self.pk)
+            if qs.exists():
+                raise ValidationError(
+                    {'seat_number': 'This seat is already taken for this event.'}
+                )
+
+    def save(self, *args, **kwargs):
+        if self.seat_id and not self.seat_number:
+            self.seat_number = self.seat.code
+        self.seat_number = normalize_seat_number(self.seat_number)
+        update_fields = kwargs.get('update_fields')
+        if update_fields is not None and 'seat_number' in update_fields:
+            kwargs['update_fields'] = list(set(list(update_fields) + ['seat_number']))
+        if update_fields is None:
+            self.full_clean()
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.event} - {self.category} ({'Sold' if self.is_sold else 'Available'})"
-
-    
 
     class Meta:
         verbose_name = 'Ticket'
         verbose_name_plural = 'Tickets'
 
-        constraints = [   # bu faqat bitta bolishini taminlaydi masalan bizga seat_number va bu tabdir  bitta bolishi kerak va shu tadbirga tegisgli o`rindiq bolishi kerak 
-            models.UniqueConstraint(fields=['content_type','object_id','seat_number'], name='unique_seat')
+        constraints = [
+            models.UniqueConstraint(
+                fields=['content_type', 'object_id', 'seat_number'],
+                condition=models.Q(seat_number__isnull=False),
+                name='unique_seat',
+            ),
+            models.UniqueConstraint(
+                fields=['content_type', 'object_id', 'seat'],
+                condition=models.Q(seat__isnull=False),
+                name='unique_ticket_seat',
+            ),
         ]
 
         indexes = [
-            models.Index(fields=['category'], name='category_index')
+            models.Index(fields=['category'], name='category_index'),
+            models.Index(fields=['content_type', 'object_id'], name='ticket_event_index'),
         ]
 
 
+class TicketTariff(models.Model):
+    category = models.CharField(
+        max_length=20,
+        choices=Ticket.CATEGORY_CHOICES,
+        default=Ticket.CATEGORY_STANDART,
+        verbose_name='category',
+    )
+    price = models.DecimalField(max_digits=12, decimal_places=2, verbose_name='Price')
+    currency = models.CharField(
+        max_length=3,
+        choices=CURRENCY_CHOICES,
+        default=CURRENCY_UZS,
+        verbose_name='Currency',
+    )
+    content_type = models.ForeignKey(
+        ContentType,
+        on_delete=models.CASCADE,
+        limit_choices_to=limit_ticket_content_type,
+    )
+    object_id = models.PositiveIntegerField()
+    event = GenericForeignKey('content_type', 'object_id')
+
+    class Meta:
+        verbose_name = 'Ticket tariff'
+        verbose_name_plural = 'Ticket tariffs'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['content_type', 'object_id', 'category'],
+                name='unique_event_tariff',
+            )
+        ]
+
+    def clean(self):
+        if not self.content_type_id:
+            raise ValidationError({'content_type': 'Event type is required.'})
+        if (
+            self.content_type.app_label != 'goticket'
+            or self.content_type.model not in TICKET_EVENT_MODELS
+        ):
+            raise ValidationError(
+                {'content_type': 'Tariff can only be linked to Club or Concert.'}
+            )
+        model = self.content_type.model_class()
+        if model is None or not model.objects.filter(pk=self.object_id).exists():
+            raise ValidationError({'object_id': 'Event not found.'})
+
+    def save(self, *args, **kwargs):
+        if kwargs.get('update_fields') is None:
+            self.full_clean()
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f'{self.event} — {self.category} ({self.price} {self.currency})'
+
+ 
 
 
 class UserManager(BaseUserManager):
@@ -202,6 +510,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     email = models.EmailField(unique=True, verbose_name="Email")
     full_name = models.CharField(max_length=200, verbose_name='Full name', db_index=True )
     phone = models.CharField(max_length=200, unique=True, null=True, blank=True)
+    photo = models.ImageField(upload_to='photos/user_photo/', blank=True, null=True)
 
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
@@ -222,43 +531,15 @@ class User(AbstractBaseUser, PermissionsMixin):
         ]
 
 
-        def __str__(self):
+    def __str__(self):
             return self.email
 
 
-
-class Cart(models.Model):
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='carts')
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-
-    def __str__(self):
-        return f"Cart {self.id} for {self.user.email}"
-    
-    class Meta:
-        verbose_name = "Cart"
-        verbose_name_plural = "Carts"
-        ordering = ['-created_at']
+def delete_event_tickets(sender, instance, **kwargs):
+    ct = ContentType.objects.get_for_model(sender)
+    Ticket.objects.filter(content_type=ct, object_id=instance.pk).delete()
+    TicketTariff.objects.filter(content_type=ct, object_id=instance.pk).delete()
 
 
-
-class CartItem(models.Model):
-    cart = models.ForeignKey(Cart, on_delete=models.CASCADE, related_name='items')
-    ticket = models.ForeignKey(Ticket, on_delete=models.CASCADE, related_name='cart_items')
-    added_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        verbose_name = "Cart Item"
-        verbose_name_plural = "Cart Items"
-
-
-
-class Seat(models.Model):
-    seat_number = models.IntegerField(default=1, verbose_name='seat_number')
-    place = models.ForeignKey(Place, on_delete=models.CASCADE, related_name='seats')
-
-    class Meta :
-        verbose_name = "Seat"
-        verbose_name_plural = "Seats"
- 
+pre_delete.connect(delete_event_tickets, sender=Club)
+pre_delete.connect(delete_event_tickets, sender=Concert)

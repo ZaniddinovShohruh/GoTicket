@@ -207,6 +207,8 @@ marimo/_lsp/
 __marimo__/
 .idea
 __pycache__
+node_modules/
+media/
 
 ./goticket/migrations
 
