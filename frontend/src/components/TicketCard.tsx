@@ -1,8 +1,9 @@
 import { formatDate, formatPrice } from '../lib/format'
 import type { Ticket } from '../types/api'
 
+// "19:30:00" -> "19:30". Match (Club) da vaqt o'rniga sana keladi, uni ko'rsatmaymiz
 function formatTime(value?: string | null) {
-  if (!value || !/^\d{2}:\d{2}/.test(value)) return null
+  if (!value || !value.includes(':')) return null
   return value.slice(0, 5)
 }
 

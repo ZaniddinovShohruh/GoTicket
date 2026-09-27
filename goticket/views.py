@@ -6,7 +6,6 @@ from django.db import IntegrityError, transaction
 from django.utils import timezone
 from django.contrib.contenttypes.models import ContentType
 from django.contrib.contenttypes.prefetch import GenericPrefetch
-from django.db.models import Count, Q
 from rest_framework import generics, filters, status
 from rest_framework.permissions import IsAuthenticated, IsAdminUser, AllowAny
 from rest_framework.response import Response
@@ -258,17 +257,31 @@ class PlaceDeleteView(generics.DestroyAPIView):
     
 
 
-def tickets_with_events(qs=None):
-    qs = Ticket.objects.all() if qs is None else qs
-    return qs.select_related('content_type', 'buyer', 'seat__section').prefetch_related(
-        GenericPrefetch(
-            'event',
-            querysets=[
-                Club.objects.select_related('places', 'cities', 'sports'),
-                Concert.objects.select_related('places', 'cities', 'singer'),
-            ],
-        )
+# chiptalarni tadbiri, o'rindig'i va xaridori bilan birga oladi (har bir chipta uchun alohida so'rov ketmasligi uchun)
+def get_tickets_queryset():
+    return Ticket.objects.select_related('content_type', 'buyer', 'seat__section').prefetch_related(
+        GenericPrefetch('event', [
+            Club.objects.select_related('places', 'cities', 'sports'),
+            Concert.objects.select_related('places', 'cities', 'singer'),
+        ])
     )
+
+
+# event_type='club' yoki 'concert' bo'yicha tadbirni topadi, topilmasa None
+def get_event(event_type, event_id):
+    if not str(event_id).isdigit():
+        return None
+    if event_type == 'club':
+        return Club.objects.select_related('places', 'cities', 'sports').filter(pk=event_id).first()
+    if event_type == 'concert':
+        return Concert.objects.select_related('places', 'cities', 'singer').filter(pk=event_id).first()
+    return None
+
+
+# tadbirdagi shu kategoriya narxi (VIP yoki Standart)
+def get_tariff(event, category):
+    ct = ContentType.objects.get_for_model(event)
+    return TicketTariff.objects.filter(content_type=ct, object_id=event.pk, category=category).first()
 
 
 class TicketView(generics.CreateAPIView):
@@ -284,18 +297,20 @@ class TicketListView(generics.ListAPIView):
     ordering = ['price', 'ticket_id']
 
     def get_queryset(self):
-        qs = tickets_with_events()
+        qs = get_tickets_queryset()
+
+        # ?available=1 -> faqat sotilmagan chiptalar
         available = self.request.query_params.get('available')
         if available in ('1', 'true', 'True'):
             qs = qs.filter(is_sold=False)
 
-        # Aniq tadbir: ?event_type=club|concert&event_id=5
+        # ?event_type=club&event_id=5 -> faqat shu tadbir chiptalari
         event_type = self.request.query_params.get('event_type')
         event_id = self.request.query_params.get('event_id')
-        if event_type in ('club', 'concert') and event_id:
-            model = Club if event_type == 'club' else Concert
-            ct = ContentType.objects.get_for_model(model)
-            qs = qs.filter(content_type=ct, object_id=event_id)
+        if event_type == 'club' and event_id:
+            qs = qs.filter(content_type=ContentType.objects.get_for_model(Club), object_id=event_id)
+        if event_type == 'concert' and event_id:
+            qs = qs.filter(content_type=ContentType.objects.get_for_model(Concert), object_id=event_id)
         return qs
 
 class TicketUpdateView(generics.UpdateAPIView):
@@ -322,143 +337,126 @@ class TicketBuyView(APIView):
 
     @transaction.atomic
     def post(self, request, pk):
-        ticket = get_object_or_404(
-            Ticket.objects.select_for_update(),
-            pk=pk,
-        )
+        # select_for_update: bir vaqtda ikki kishi bitta chiptani sotib ololmasligi uchun qatorni qulflaydi
+        ticket = get_object_or_404(Ticket.objects.select_for_update(), pk=pk)
+
         if ticket.is_sold:
-            return Response(
-                {'detail': 'Ticket already sold.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return Response({'detail': 'Ticket already sold.'}, status=status.HTTP_400_BAD_REQUEST)
         if ticket.event is None:
-            return Response(
-                {'detail': 'Event is no longer available.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return Response({'detail': 'Event is no longer available.'}, status=status.HTTP_400_BAD_REQUEST)
+
         ticket.is_sold = True
         ticket.buyer = request.user
         ticket.purchased_at = timezone.now()
         ticket.save(update_fields=['is_sold', 'buyer', 'purchased_at'])
-        return Response(TicketSerializer(ticket).data, status=status.HTTP_200_OK)
+        return Response(TicketSerializer(ticket).data)
 
 
-def get_event_or_404(event_type, event_id):
-    model = Club if event_type == 'club' else Concert
-    related = ('places', 'cities', 'sports') if model is Club else ('places', 'cities', 'singer')
-    event = model.objects.select_related(*related).filter(pk=event_id).first()
-    if event is None:
-        return None, None, None
-    ct = ContentType.objects.get_for_model(model)
-    return event, event.places, ct
-
-
-def event_from_query(request):
-    event_type = request.query_params.get('event_type')
-    event_id = request.query_params.get('event_id')
-    if event_type not in ('club', 'concert') or not str(event_id or '').isdigit():
-        return None, None, None, Response(
-            {'detail': 'event_type and event_id are required.'},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
-    event, place, ct = get_event_or_404(event_type, event_id)
-    if event is None:
-        return None, None, None, Response(
-            {'detail': 'Event not found.'}, status=status.HTTP_404_NOT_FOUND
-        )
-    return event, place, ct, None
-
-
-def sold_seat_ids(ct, event):
-    return Ticket.objects.filter(
-        content_type=ct, object_id=event.pk, is_sold=True, seat__isnull=False
-    ).values_list('seat_id', flat=True)
-
-
+# tadbir stadionidagi sektorlar: nechta joy bor, nechtasi bo'sh va narxi
 class TicketSeatsView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request):
-        event, place, ct, error = event_from_query(request)
-        if error:
-            return error
+        event_type = request.query_params.get('event_type')
+        event = get_event(event_type, request.query_params.get('event_id'))
+        if event is None:
+            return Response({'detail': 'Event not found.'}, status=status.HTTP_404_NOT_FOUND)
 
-        tariffs = {
-            t.category: t
-            for t in TicketTariff.objects.filter(content_type=ct, object_id=event.pk)
-        }
-        sections = place.sections.annotate(
-            total=Count('seats', distinct=True),
-            sold=Count(
-                'seats',
-                filter=Q(
-                    seats__tickets__content_type=ct,
-                    seats__tickets__object_id=event.pk,
-                    seats__tickets__is_sold=True,
-                ),
-                distinct=True,
-            ),
-        )
-        section_rows = []
-        for s in sections:
-            tariff = tariffs.get(s.category)
-            section_rows.append({
-                'id': s.pk,
-                'name': s.name,
-                'category': s.category,
-                'map_x': float(s.map_x) if s.map_x is not None else None,
-                'map_y': float(s.map_y) if s.map_y is not None else None,
-                'total': s.total,
-                'available': s.total - s.sold,
+        place = event.places
+        ct = ContentType.objects.get_for_model(event)
+        tariffs = TicketTariff.objects.filter(content_type=ct, object_id=event.pk)
+
+        sections = []
+        for section in place.sections.all():
+            total = section.seats.count()
+            sold = section.seats.filter(
+                tickets__content_type=ct,
+                tickets__object_id=event.pk,
+                tickets__is_sold=True,
+            ).count()
+            tariff = tariffs.filter(category=section.category).first()
+
+            sections.append({
+                'id': section.pk,
+                'name': section.name,
+                'category': section.category,
+                'map_x': float(section.map_x) if section.map_x is not None else None,
+                'map_y': float(section.map_y) if section.map_y is not None else None,
+                'total': total,
+                'available': total - sold,
                 'price': str(tariff.price) if tariff else None,
                 'currency': tariff.currency if tariff else None,
             })
-        total = sum(s['total'] for s in section_rows)
+
+        capacity = 0
+        available_count = 0
+        for section in sections:
+            capacity += section['total']
+            available_count += section['available']
+
         return Response({
-            'event_type': request.query_params.get('event_type'),
+            'event_type': event_type,
             'event_id': event.pk,
             'event': event_info(event),
             'place_name': place.place_name,
             'scheme': place.scheme.url if place.scheme else None,
-            'capacity': total,
-            'available_count': sum(s['available'] for s in section_rows),
-            'sections': section_rows,
-            'tariffs': TicketTariffSerializer(tariffs.values(), many=True).data,
+            'capacity': capacity,
+            'available_count': available_count,
+            'sections': sections,
+            'tariffs': TicketTariffSerializer(tariffs, many=True).data,
         })
 
 
+# bitta sektordagi qatorlar va o'rindiqlar (qaysilari sotilgan)
 class SectionSeatsView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request, section_id):
-        event, place, ct, error = event_from_query(request)
-        if error:
-            return error
-        section = place.sections.filter(pk=section_id).first()
+        event = get_event(request.query_params.get('event_type'), request.query_params.get('event_id'))
+        if event is None:
+            return Response({'detail': 'Event not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        section = event.places.sections.filter(pk=section_id).first()
         if section is None:
             return Response({'detail': 'Section not found.'}, status=status.HTTP_404_NOT_FOUND)
 
-        sold = set(sold_seat_ids(ct, event).filter(seat__section=section))
+        ct = ContentType.objects.get_for_model(event)
+        sold_ids = set(
+            Ticket.objects.filter(
+                content_type=ct,
+                object_id=event.pk,
+                is_sold=True,
+                seat__section=section,
+            ).values_list('seat_id', flat=True)
+        )
+
+        # { 1: [o'rindiqlar], 2: [o'rindiqlar], ... }
         rows = {}
-        for seat_id, row, number in section.seats.values_list('pk', 'row', 'number'):
-            rows.setdefault(row, []).append({
-                'id': seat_id,
-                'number': number,
-                'sold': seat_id in sold,
+        for seat in section.seats.all():
+            if seat.row not in rows:
+                rows[seat.row] = []
+            rows[seat.row].append({
+                'id': seat.pk,
+                'number': seat.number,
+                'sold': seat.pk in sold_ids,
             })
-        tariff = TicketTariff.objects.filter(
-            content_type=ct, object_id=event.pk, category=section.category
-        ).first()
+
+        rows_list = []
+        for row in sorted(rows):
+            rows_list.append({'row': row, 'seats': rows[row]})
+
+        tariff = get_tariff(event, section.category)
         return Response({
             'id': section.pk,
             'name': section.name,
             'category': section.category,
             'price': str(tariff.price) if tariff else None,
             'currency': tariff.currency if tariff else None,
-            'rows': [{'row': r, 'seats': rows[r]} for r in sorted(rows)],
+            'rows': rows_list,
         })
 
 
+# foydalanuvchi sxemadan tanlagan o'rindiqni sotib olish
 class TicketBuySeatView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -467,41 +465,31 @@ class TicketBuySeatView(APIView):
         serializer = TicketSeatBuySerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
-        event, place, ct = get_event_or_404(data['event_type'], data['event_id'])
+
+        event = get_event(data['event_type'], data['event_id'])
         if event is None:
             return Response({'detail': 'Event not found.'}, status=status.HTTP_404_NOT_FOUND)
 
-        seat = (
-            Seat.objects.select_for_update()
-            .select_related('section')
-            .filter(pk=data['seat_id'], section__place=place)
-            .first()
-        )
-        if seat is None:
-            return Response(
-                {'detail': 'Bu o‘rindiq tadbir o‘tadigan stadionda yo‘q.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        tariff = TicketTariff.objects.filter(
-            content_type=ct, object_id=event.pk, category=seat.section.category
+        seat = Seat.objects.select_for_update().select_related('section').filter(
+            pk=data['seat_id'],
+            section__place=event.places,
         ).first()
-        if tariff is None:
-            return Response(
-                {'detail': f'Admin {seat.section.category} kategoriyasi uchun narx belgilamagan.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        if seat is None:
+            return Response({'detail': 'Bu o‘rindiq tadbir o‘tadigan stadionda yo‘q.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        existing = (
-            Ticket.objects.select_for_update()
-            .filter(content_type=ct, object_id=event.pk, seat=seat)
-            .first()
-        )
-        if existing and existing.is_sold:
-            return Response(
-                {'detail': 'Bu o‘rindiq allaqachon sotilgan.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        ticket = existing or Ticket(content_type=ct, object_id=event.pk, seat=seat)
+        tariff = get_tariff(event, seat.section.category)
+        if tariff is None:
+            message = f'Admin {seat.section.category} kategoriyasi uchun narx belgilamagan.'
+            return Response({'detail': message}, status=status.HTTP_400_BAD_REQUEST)
+
+        # admin shu o'rindiqqa oldindan chipta yaratgan bo'lishi mumkin
+        ct = ContentType.objects.get_for_model(event)
+        ticket = Ticket.objects.select_for_update().filter(content_type=ct, object_id=event.pk, seat=seat).first()
+        if ticket is not None and ticket.is_sold:
+            return Response({'detail': 'Bu o‘rindiq allaqachon sotilgan.'}, status=status.HTTP_400_BAD_REQUEST)
+        if ticket is None:
+            ticket = Ticket(content_type=ct, object_id=event.pk, seat=seat)
+
         ticket.seat_number = seat.code
         ticket.category = tariff.category
         ticket.price = tariff.price
@@ -512,12 +500,9 @@ class TicketBuySeatView(APIView):
         try:
             ticket.save()
         except (IntegrityError, DjangoValidationError):
-            return Response(
-                {'detail': 'Bu o‘rindiq allaqachon sotilgan.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        ticket = tickets_with_events(Ticket.objects.filter(pk=ticket.pk)).get()
-        return Response(TicketSerializer(ticket).data, status=status.HTTP_200_OK)
+            return Response({'detail': 'Bu o‘rindiq allaqachon sotilgan.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(TicketSerializer(ticket).data)
 
 
 class MyTicketsView(generics.ListAPIView):
@@ -525,9 +510,8 @@ class MyTicketsView(generics.ListAPIView):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        return tickets_with_events(
-            Ticket.objects.filter(buyer=self.request.user, is_sold=True)
-        ).order_by('-purchased_at')
+        user = self.request.user
+        return get_tickets_queryset().filter(buyer=user, is_sold=True).order_by('-purchased_at')
 
 
 

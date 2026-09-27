@@ -59,66 +59,55 @@ class SeatAdmin(admin.ModelAdmin):
     list_per_page = 100
 
 
-class EventLinkAdminFormMixin:
-    def apply_event_to_instance(self):
-        data = getattr(self, 'cleaned_data', None) or {}
-        event = data.get('club') or data.get('concert')
-        if not event:
-            return
-        self.instance.content_type = ContentType.objects.get_for_model(event.__class__)
-        self.instance.object_id = event.pk
-
-    def _post_clean(self):
-        self.apply_event_to_instance()
-        super()._post_clean()
-
-
-class TicketAdminForm(EventLinkAdminFormMixin, forms.ModelForm):
+# Ticket va TicketTariff uchun umumiy forma: id yozish o'rniga ro'yxatdan Club yoki Concert tanlanadi
+class EventChoiceForm(forms.ModelForm):
     club = forms.ModelChoiceField(
         queryset=Club.objects.all().order_by('club_name'),
         required=False,
         label='Club (match)',
-        help_text='Match chiptasi bo‘lsa Club ni tanlang.',
+        help_text='Match bo‘lsa Club ni tanlang.',
     )
     concert = forms.ModelChoiceField(
         queryset=Concert.objects.all().order_by('concert_name'),
         required=False,
         label='Concert',
-        help_text='Konsert chiptasi bo‘lsa Concert ni tanlang.',
+        help_text='Konsert bo‘lsa Concert ni tanlang.',
     )
-
-    class Meta:
-        model = Ticket
-        fields = ['club', 'concert', 'category', 'price', 'currency', 'seat', 'seat_number']
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        event = getattr(self.instance, 'event', None)
+        # tahrirlashda oldin tanlangan tadbirni ko'rsatamiz
+        if not self.instance.pk:
+            return
+        event = self.instance.event
         if isinstance(event, Club):
             self.fields['club'].initial = event
-        elif isinstance(event, Concert):
+        if isinstance(event, Concert):
             self.fields['concert'].initial = event
 
     def clean(self):
-        cleaned = super().clean()
-        club = cleaned.get('club')
-        concert = cleaned.get('concert')
+        cleaned_data = super().clean()
+        club = cleaned_data.get('club')
+        concert = cleaned_data.get('concert')
+
         if club and concert:
             raise forms.ValidationError('Faqat Club yoki Concert dan bittasini tanlang.')
-        if not club and not concert:
-            raise forms.ValidationError('Club yoki Concert tanlang.')
-        return cleaned
 
-    def save(self, commit=True):
-        ticket = super().save(commit=False)
-        club = self.cleaned_data['club']
-        concert = self.cleaned_data['concert']
+        # tanlangan tadbirni content_type va object_id ga yozamiz, model.clean() shularni tekshiradi
+        # (hech narsa tanlanmasa "Club yoki Concert tanlang" xatosini model o'zi beradi)
         event = club or concert
-        ticket.content_type = ContentType.objects.get_for_model(event.__class__)
-        ticket.object_id = event.pk
-        if commit:
-            ticket.save()
-        return ticket
+        if event:
+            self.instance.content_type = ContentType.objects.get_for_model(event)
+            self.instance.object_id = event.pk
+        else:
+            self.instance.content_type = None
+        return cleaned_data
+
+
+class TicketAdminForm(EventChoiceForm):
+    class Meta:
+        model = Ticket
+        fields = ['club', 'concert', 'category', 'price', 'currency', 'seat', 'seat_number']
 
 
 @admin.register(Ticket)
@@ -144,48 +133,10 @@ class TicketAdmin(admin.ModelAdmin):
     )
 
 
-class TicketTariffAdminForm(EventLinkAdminFormMixin, forms.ModelForm):
-    club = forms.ModelChoiceField(
-        queryset=Club.objects.all().order_by('club_name'),
-        required=False,
-        label='Club (match)',
-    )
-    concert = forms.ModelChoiceField(
-        queryset=Concert.objects.all().order_by('concert_name'),
-        required=False,
-        label='Concert',
-    )
-
+class TicketTariffAdminForm(EventChoiceForm):
     class Meta:
         model = TicketTariff
         fields = ['club', 'concert', 'category', 'price', 'currency']
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        event = getattr(self.instance, 'event', None)
-        if isinstance(event, Club):
-            self.fields['club'].initial = event
-        elif isinstance(event, Concert):
-            self.fields['concert'].initial = event
-
-    def clean(self):
-        cleaned = super().clean()
-        club = cleaned.get('club')
-        concert = cleaned.get('concert')
-        if club and concert:
-            raise forms.ValidationError('Faqat Club yoki Concert dan bittasini tanlang.')
-        if not club and not concert:
-            raise forms.ValidationError('Club yoki Concert tanlang.')
-        return cleaned
-
-    def save(self, commit=True):
-        tariff = super().save(commit=False)
-        event = self.cleaned_data['club'] or self.cleaned_data['concert']
-        tariff.content_type = ContentType.objects.get_for_model(event.__class__)
-        tariff.object_id = event.pk
-        if commit:
-            tariff.save()
-        return tariff
 
 
 @admin.register(TicketTariff)

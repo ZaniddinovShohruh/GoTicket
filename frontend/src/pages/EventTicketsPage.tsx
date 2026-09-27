@@ -13,11 +13,19 @@ import type { EventType, SeatSection, Ticket } from '../types/api'
 
 type Picked = { id: number; row: number; number: number }
 
-function sectionTone(section: SeatSection, active: boolean) {
+// sektor tugmasining rangi: tanlangan / yopiq / VIP / Standart
+function sectionColor(section: SeatSection, active: boolean) {
   if (active) return 'bg-[var(--color-ink)] text-white ring-2 ring-[var(--color-accent)]'
   if (!section.available || !section.price) return 'bg-zinc-200 text-zinc-400'
   if (section.category === 'VIP') return 'bg-[var(--color-accent)] text-white hover:bg-[var(--color-accent-deep)]'
   return 'bg-[var(--color-teal)] text-white hover:opacity-90'
+}
+
+// o'rindiq tugmasining rangi: sotilgan / tanlangan / bo'sh
+function seatColor(sold: boolean, active: boolean) {
+  if (sold) return 'cursor-not-allowed bg-zinc-300 text-zinc-500'
+  if (active) return 'bg-[var(--color-accent)] text-white'
+  return 'bg-white ring-1 ring-[var(--color-line)] hover:bg-[var(--color-accent)]/15'
 }
 
 export function EventTicketsPage() {
@@ -111,33 +119,41 @@ export function EventTicketsPage() {
     setBought(null)
   }
 
-  const requireLogin = () => {
-    if (isLoggedIn) return false
-    navigate('/login', { state: { from: `/tickets/${eventType}/${eventId}` } })
-    return true
+  const pickSeat = (seatId: number, row: number, number: number) => {
+    setPicked({ id: seatId, row, number })
+    setBought(null)
   }
 
+  const goToLogin = () => {
+    navigate('/login', { state: { from: `/tickets/${eventType}/${eventId}` } })
+  }
+
+  // sxemadan tanlangan o'rindiqni sotib olish
   const onBuy = () => {
-    if (!picked || requireLogin()) return
+    if (!picked) return
+    if (!isLoggedIn) return goToLogin()
     buy.mutate(picked.id)
   }
 
+  // admin yaratgan tayyor chiptani sotib olish
   const onBuyLoose = (ticketId: number) => {
-    if (requireLogin()) return
+    if (!isLoggedIn) return goToLogin()
     buyLoose.mutate(ticketId)
   }
 
+  // sxema faqat sektorlar va narxlar bo'lsa ko'rinadi
   const hasMap = Boolean(data?.sections.length && data?.tariffs.length)
+  // sektorga bog'lanmagan chiptalar alohida ro'yxatda chiqadi
   const looseTickets = looseQuery.data?.filter((t) => !t.section) ?? []
   const loading = seatsQuery.isLoading || looseQuery.isLoading
 
-  const subtitle = [
-    event?.date ? formatDate(event.date) : null,
-    [data?.place_name, event?.city].filter(Boolean).join(', ') || null,
-    data ? `${data.available_count} / ${data.capacity} bo‘sh joy` : null,
-  ]
-    .filter(Boolean)
-    .join(' · ')
+  // sarlavha ostidagi yozuv: "1-okt · Bunyodkor, Toshkent · 950 / 1000 bo‘sh joy"
+  const subtitleParts: string[] = []
+  if (event?.date) subtitleParts.push(formatDate(event.date))
+  const where = [data?.place_name, event?.city].filter(Boolean).join(', ')
+  if (where) subtitleParts.push(where)
+  if (data) subtitleParts.push(`${data.available_count} / ${data.capacity} bo‘sh joy`)
+  const subtitle = subtitleParts.join(' · ')
 
   return (
     <PageShell
@@ -205,7 +221,7 @@ export function EventTicketsPage() {
                     onClick={() => chooseSection(s)}
                     style={{ left: `${s.map_x}%`, top: `${s.map_y}%` }}
                     title={`${s.name}: ${s.available} bo‘sh`}
-                    className={`absolute -translate-x-1/2 -translate-y-1/2 rounded-md px-2 py-1 text-xs font-bold shadow ${sectionTone(s, s.id === sectionId)}`}
+                    className={`absolute -translate-x-1/2 -translate-y-1/2 rounded-md px-2 py-1 text-xs font-bold shadow ${sectionColor(s, s.id === sectionId)}`}
                   >
                     {s.name}
                   </button>
@@ -220,7 +236,7 @@ export function EventTicketsPage() {
                   type="button"
                   disabled={!s.available || !s.price}
                   onClick={() => chooseSection(s)}
-                  className={`rounded-xl px-3 py-2 text-left transition disabled:cursor-not-allowed ${sectionTone(s, s.id === sectionId)}`}
+                  className={`rounded-xl px-3 py-2 text-left transition disabled:cursor-not-allowed ${sectionColor(s, s.id === sectionId)}`}
                 >
                   <p className="font-display text-lg font-bold">{s.name}</p>
                   <p className="text-xs opacity-90">
@@ -262,30 +278,18 @@ export function EventTicketsPage() {
                         {row}-qator
                       </span>
                       <div className="flex gap-1">
-                        {seats.map((seat) => {
-                          const active = picked?.id === seat.id
-                          return (
-                            <button
-                              key={seat.id}
-                              type="button"
-                              disabled={seat.sold}
-                              title={`${section.name}, ${row}-qator, ${seat.number}-o‘rin`}
-                              onClick={() => {
-                                setPicked({ id: seat.id, row, number: seat.number })
-                                setBought(null)
-                              }}
-                              className={`h-8 w-8 shrink-0 rounded-md text-[11px] font-semibold transition ${
-                                seat.sold
-                                  ? 'cursor-not-allowed bg-zinc-300 text-zinc-500'
-                                  : active
-                                    ? 'bg-[var(--color-accent)] text-white'
-                                    : 'bg-white ring-1 ring-[var(--color-line)] hover:bg-[var(--color-accent)]/15'
-                              }`}
-                            >
-                              {seat.number}
-                            </button>
-                          )
-                        })}
+                        {seats.map((seat) => (
+                          <button
+                            key={seat.id}
+                            type="button"
+                            disabled={seat.sold}
+                            title={`${section.name}, ${row}-qator, ${seat.number}-o‘rin`}
+                            onClick={() => pickSeat(seat.id, row, seat.number)}
+                            className={`h-8 w-8 shrink-0 rounded-md text-[11px] font-semibold transition ${seatColor(seat.sold, picked?.id === seat.id)}`}
+                          >
+                            {seat.number}
+                          </button>
+                        ))}
                       </div>
                     </div>
                   ))}

@@ -2,31 +2,39 @@ from django.db import models
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db.models.signals import pre_delete
+from django.dispatch import receiver
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 from django.contrib.contenttypes.models import ContentType #bitta modelni hamma modelga ulash uchun ishlatiladi va hamma modelni bitta ContentType obyekt qilib saqlaydi 
 from django.contrib.contenttypes.fields import GenericForeignKey #bir nechta modelga bir xil field orqali ulanadi, ForeignKey faqat bitta modelga ulanadi va kop modellarni ulash kere bosa kop FK yozish kere , bu bilan faqat bitta shu yoziladi va bitta qator kod bilan bir necha qator FK yoziladi 
 
+# chipta faqat shu ikki modelga ulanadi
 TICKET_EVENT_MODELS = ('club', 'concert')
 
-CURRENCY_USD = 'USD'
-CURRENCY_EUR = 'EUR'
-CURRENCY_UZS = 'UZS'
+CATEGORY_CHOICES = (
+    ('VIP', 'VIP'),
+    ('Standart', 'Standart'),
+)
+
 CURRENCY_CHOICES = (
-    (CURRENCY_USD, 'Dollar ($)'),
-    (CURRENCY_EUR, 'Euro (€)'),
-    (CURRENCY_UZS, "So'm"),
+    ('USD', 'Dollar ($)'),
+    ('EUR', 'Euro (€)'),
+    ('UZS', "So'm"),
 )
 
 
+# admin panelda content_type ro'yxatida faqat Club va Concert chiqadi (migratsiyalarda ishlatilgan, nomini o'zgartirmang)
 def limit_ticket_content_type():
     return models.Q(app_label='goticket', model__in=TICKET_EVENT_MODELS)
 
 
+# "  A1 " -> "A1", bo'sh qiymat -> None
 def normalize_seat_number(value):
     if value is None:
         return None
-    text = str(value).strip()
-    return text or None 
+    value = str(value).strip()
+    if value == '':
+        return None
+    return value
 
 
 
@@ -174,36 +182,29 @@ class Place(models.Model):
         Place.objects.filter(pk=self.pk).update(capacity=self.capacity)
 
 
+# "20,22,24" -> [20, 22, 24]  (1-qatorda 20 ta, 2-qatorda 22 ta, 3-qatorda 24 ta o'rindiq)
 def parse_row_layout(value):
-    if not value or not value.strip():
-        return []
     counts = []
-    for part in value.replace(';', ',').split(','):
+    if not value:
+        return counts
+
+    for part in value.split(','):
         part = part.strip()
-        if not part:
+        if part == '':
             continue
-        if not part.isdigit() or int(part) < 1:
-            raise ValidationError(
-                {'row_layout': 'Faqat musbat sonlar, vergul bilan: masalan 20,22,24'}
-            )
+        if not part.isdigit() or int(part) == 0:
+            raise ValidationError({'row_layout': 'Faqat musbat sonlar, vergul bilan: masalan 20,22,24'})
         counts.append(int(part))
     return counts
 
 
 class Section(models.Model):
-    CATEGORY_VIP = 'VIP'
-    CATEGORY_STANDART = 'Standart'
-    CATEGORY_CHOICES = (
-        (CATEGORY_VIP, 'VIP'),
-        (CATEGORY_STANDART, 'Standart'),
-    )
-
     place = models.ForeignKey(Place, on_delete=models.CASCADE, related_name='sections')
     name = models.CharField(max_length=20, verbose_name='Section name', help_text='Masalan A401, B408, Fan-zona')
     category = models.CharField(
         max_length=20,
         choices=CATEGORY_CHOICES,
-        default=CATEGORY_STANDART,
+        default='Standart',
         verbose_name='category',
     )
     rows = models.PositiveIntegerField(default=10, verbose_name='Rows')
@@ -237,6 +238,7 @@ class Section(models.Model):
     def __str__(self):
         return f'{self.place} — {self.name}'
 
+    # har qatorda nechta o'rindiq borligi: [20, 20, 20] yoki row_layout dan [20, 22, 24]
     def row_counts(self):
         layout = parse_row_layout(self.row_layout)
         if layout:
@@ -244,40 +246,45 @@ class Section(models.Model):
         return [self.seats_per_row] * self.rows
 
     def clean(self):
-        counts = self.row_counts()
-        if not counts or sum(counts) < 1:
+        if sum(self.row_counts()) == 0:
             raise ValidationError('Sektorda kamida bitta o‘rindiq bo‘lishi kerak.')
-        for coord in ('map_x', 'map_y'):
-            value = getattr(self, coord)
-            if value is not None and not (0 <= value <= 100):
-                raise ValidationError({coord: '0 dan 100 gacha bo‘lishi kerak.'})
+        if self.map_x is not None and not (0 <= self.map_x <= 100):
+            raise ValidationError({'map_x': '0 dan 100 gacha bo‘lishi kerak.'})
+        if self.map_y is not None and not (0 <= self.map_y <= 100):
+            raise ValidationError({'map_y': '0 dan 100 gacha bo‘lishi kerak.'})
 
     def save(self, *args, **kwargs):
         super().save(*args, **kwargs)
         self.generate_seats()
 
+    # sektor saqlanganda o'rindiqlarni avtomatik yaratadi
     def generate_seats(self):
-        wanted = set()
-        for row, count in enumerate(self.row_counts(), start=1):
+        # kerak bo'lgan o'rindiqlar: (qator, raqam)
+        needed = set()
+        row = 1
+        for count in self.row_counts():
             for number in range(1, count + 1):
-                wanted.add((row, number))
+                needed.add((row, number))
+            row += 1
 
-        existing = {
-            (row, number): pk
-            for pk, row, number in self.seats.values_list('pk', 'row', 'number')
-        }
-        missing = [
-            Seat(section=self, row=row, number=number)
-            for row, number in sorted(wanted - existing.keys())
-        ]
-        Seat.objects.bulk_create(missing, batch_size=2000, ignore_conflicts=True)
+        # bazada allaqachon bor o'rindiqlar
+        existing = {}
+        for seat in self.seats.all():
+            existing[(seat.row, seat.number)] = seat
 
-        extra_ids = [pk for key, pk in existing.items() if key not in wanted]
-        if extra_ids:
-            used = set(
-                Ticket.objects.filter(seat_id__in=extra_ids).values_list('seat_id', flat=True)
-            )
-            Seat.objects.filter(pk__in=[pk for pk in extra_ids if pk not in used]).delete()
+        # yetishmayotganlarini yaratamiz
+        new_seats = []
+        for row, number in sorted(needed):
+            if (row, number) not in existing:
+                new_seats.append(Seat(section=self, row=row, number=number))
+        Seat.objects.bulk_create(new_seats, batch_size=2000)
+
+        # ortiqchalarini o'chiramiz, lekin chiptasi bor o'rindiqqa tegmaymiz
+        extra_ids = []
+        for key, seat in existing.items():
+            if key not in needed:
+                extra_ids.append(seat.pk)
+        Seat.objects.filter(pk__in=extra_ids, tickets__isnull=True).delete()
 
         self.place.refresh_capacity()
 
@@ -306,24 +313,17 @@ class Seat(models.Model):
 
 
 class Ticket(models.Model):
-    CATEGORY_VIP = 'VIP'
-    CATEGORY_STANDART = 'Standart'
-    CATEGORY_CHOICES = (
-        (CATEGORY_VIP, 'VIP'),
-        (CATEGORY_STANDART, 'Standart'),
-    )
-
     category = models.CharField(
         max_length=20,
         choices=CATEGORY_CHOICES,
-        default=CATEGORY_STANDART,
+        default='Standart',
         verbose_name='category',
     ) 
     price = models.DecimalField(max_digits=12, decimal_places=2, verbose_name='Price')
     currency = models.CharField(
         max_length=3,
         choices=CURRENCY_CHOICES,
-        default=CURRENCY_UZS,
+        default='UZS',
         verbose_name='Currency',
     )
     seat = models.ForeignKey(
@@ -356,42 +356,38 @@ class Ticket(models.Model):
 
     def clean(self):
         self.seat_number = normalize_seat_number(self.seat_number)
+
+        # content_type va object_id admin formasida yo'q, shuning uchun xatolar field nomisiz beriladi
         if not self.content_type_id:
-            raise ValidationError({'content_type': 'Event type is required.'})
-        if (
-            self.content_type.app_label != 'goticket'
-            or self.content_type.model not in TICKET_EVENT_MODELS
-        ):
-            raise ValidationError(
-                {'content_type': 'Ticket can only be linked to Club or Concert.'}
-            )
+            raise ValidationError('Club yoki Concert tanlang.')
+        if self.content_type.model not in TICKET_EVENT_MODELS:
+            raise ValidationError('Chipta faqat Club yoki Concert ga ulanadi.')
+
+        # self.event keshlangan eski qiymatni qaytarishi mumkin, shuning uchun bazadan olamiz
         model = self.content_type.model_class()
-        event = model.objects.filter(pk=self.object_id).first() if model else None
+        event = model.objects.filter(pk=self.object_id).first()
         if event is None:
-            raise ValidationError({'object_id': 'Event not found.'})
+            raise ValidationError('Tadbir topilmadi.')
+
         if self.seat_id and self.seat.section.place_id != event.places_id:
             raise ValidationError({'seat': 'Bu o‘rindiq tadbir o‘tadigan stadionga tegishli emas.'})
+
         if self.seat_number:
-            qs = Ticket.objects.filter(
+            same_seat = Ticket.objects.filter(
                 content_type=self.content_type,
                 object_id=self.object_id,
                 seat_number=self.seat_number,
-            )
-            if self.pk:
-                qs = qs.exclude(pk=self.pk)
-            if qs.exists():
-                raise ValidationError(
-                    {'seat_number': 'This seat is already taken for this event.'}
-                )
+            ).exclude(pk=self.pk)
+            if same_seat.exists():
+                raise ValidationError({'seat_number': 'This seat is already taken for this event.'})
 
     def save(self, *args, **kwargs):
         if self.seat_id and not self.seat_number:
             self.seat_number = self.seat.code
         self.seat_number = normalize_seat_number(self.seat_number)
-        update_fields = kwargs.get('update_fields')
-        if update_fields is not None and 'seat_number' in update_fields:
-            kwargs['update_fields'] = list(set(list(update_fields) + ['seat_number']))
-        if update_fields is None:
+
+        # update_fields bilan saqlash (masalan sotib olish) faqat bir nechta fieldni o'zgartiradi, to'liq tekshiruv shart emas
+        if kwargs.get('update_fields') is None:
             self.full_clean()
         super().save(*args, **kwargs)
 
@@ -424,15 +420,15 @@ class Ticket(models.Model):
 class TicketTariff(models.Model):
     category = models.CharField(
         max_length=20,
-        choices=Ticket.CATEGORY_CHOICES,
-        default=Ticket.CATEGORY_STANDART,
+        choices=CATEGORY_CHOICES,
+        default='Standart',
         verbose_name='category',
     )
     price = models.DecimalField(max_digits=12, decimal_places=2, verbose_name='Price')
     currency = models.CharField(
         max_length=3,
         choices=CURRENCY_CHOICES,
-        default=CURRENCY_UZS,
+        default='UZS',
         verbose_name='Currency',
     )
     content_type = models.ForeignKey(
@@ -455,17 +451,12 @@ class TicketTariff(models.Model):
 
     def clean(self):
         if not self.content_type_id:
-            raise ValidationError({'content_type': 'Event type is required.'})
-        if (
-            self.content_type.app_label != 'goticket'
-            or self.content_type.model not in TICKET_EVENT_MODELS
-        ):
-            raise ValidationError(
-                {'content_type': 'Tariff can only be linked to Club or Concert.'}
-            )
+            raise ValidationError('Club yoki Concert tanlang.')
+        if self.content_type.model not in TICKET_EVENT_MODELS:
+            raise ValidationError('Narx faqat Club yoki Concert ga qo‘yiladi.')
         model = self.content_type.model_class()
-        if model is None or not model.objects.filter(pk=self.object_id).exists():
-            raise ValidationError({'object_id': 'Event not found.'})
+        if not model.objects.filter(pk=self.object_id).exists():
+            raise ValidationError('Tadbir topilmadi.')
 
     def save(self, *args, **kwargs):
         if kwargs.get('update_fields') is None:
@@ -535,11 +526,10 @@ class User(AbstractBaseUser, PermissionsMixin):
             return self.email
 
 
+# GenericForeignKey CASCADE qilmaydi: Club yoki Concert o'chirilsa, uning chiptalari va narxlarini qo'lda o'chiramiz
+@receiver(pre_delete, sender=Club)
+@receiver(pre_delete, sender=Concert)
 def delete_event_tickets(sender, instance, **kwargs):
     ct = ContentType.objects.get_for_model(sender)
     Ticket.objects.filter(content_type=ct, object_id=instance.pk).delete()
     TicketTariff.objects.filter(content_type=ct, object_id=instance.pk).delete()
-
-
-pre_delete.connect(delete_event_tickets, sender=Club)
-pre_delete.connect(delete_event_tickets, sender=Concert)
